@@ -1,0 +1,21 @@
+python main.py \
+--task-name "ipt-easy-no_aug-use_wf-5e-5-naive-patchs8-crops128-midc12-singleTask-inchannel1-ms-ssim+l1" \
+--reset-task \
+--model-name 'ImageProcessingTransformer' \
+--data './data/tubulin-sim-800x800-processed-easy.npz' \
+--num-dataset-t 0,190 \
+--eval-data './data/tubulin-sim-800x800-processed-easy.npz' \
+--num-dataset-v 190,200 \
+--epochs 500 \
+--batch-size 1 \
+--lr 5e-5 \
+--lr-policy 'naive' \
+--patch-size 8 \
+--crop-size 128 \
+--mid-channels 12 \
+--heads-tails-num 1 \
+--in-channels 1 \
+--use-ms-ssim \
+--alpha-ms-ssim-l1 0.8 \
+--win-size 5 \
+--use-wf

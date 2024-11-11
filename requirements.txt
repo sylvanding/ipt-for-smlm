@@ -1,2 +1,8 @@
 torch==1.7.1
 torchvision==0.8.2
+tensorboard==1.15.0
+numpy==1.19.5
+protobuf==3.20.3
+pillow==9.5.0
+pytorch-msssim==0.2.1
+matplotlib==3.4.3

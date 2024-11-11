@@ -137,21 +137,21 @@ class ResBlock(nn.Module):
         super(ResBlock, self).__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=5, stride=1,
                      padding=2, bias=False)
-        # self.bn1 = nn.BatchNorm2d(channels)
+        self.bn1 = nn.BatchNorm2d(channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=5, stride=1,
                      padding=2, bias=False)
-        # self.bn2 = nn.BatchNorm2d(channels)
+        self.bn2 = nn.BatchNorm2d(channels)
 
     def forward(self, x):
         residual = x
 
         out = self.conv1(x)
-        # out = self.bn1(out)
+        out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        # out = self.bn2(out)
+        out = self.bn2(out)
 
         out += residual
         # out = self.relu(out)
@@ -166,18 +166,69 @@ class Head(nn.Module):
         super(Head, self).__init__()
         self.conv1= nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1,
                      padding=1, bias=False)
-        # self.bn1 = nn.BatchNorm2d(out_channels) if task_id in [0, 1, 5] else nn.Identity()
-        # self.relu = nn.ReLU(inplace=True)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
         self.resblock1 = ResBlock(out_channels)
         self.resblock2 = ResBlock(out_channels)
 
     def forward(self, x):
         out = self.conv1(x)
-        # out = self.bn1(out)
-        # out = self.relu(out)
+        out = self.bn1(out)
+        out = self.relu(out)
 
         out = self.resblock1(out)
         out = self.resblock2(out)
+
+        return out
+
+class Head_plus(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(Head_plus, self).__init__()
+        self.conv1= nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1,
+                     padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.resblock1 = ResBlock(out_channels)
+        self.downsample1 = nn.Conv2d(out_channels, out_channels*4, kernel_size=2, stride=2)
+        self.resblock2 = ResBlock(out_channels*4)
+        self.downsample2 = nn.Conv2d(out_channels*4, out_channels, kernel_size=2, stride=2)
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.resblock1(out)
+        out = self.downsample1(out)
+        out = self.resblock2(out)
+        out = self.downsample2(out)
+
+        return out
+
+class Tail_plus(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(Tail_plus, self).__init__()
+        self.conv1= nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1,
+                     padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(in_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.resblock1 = ResBlock(in_channels)
+        self.upsample1 = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=4, stride=2, padding=1)
+        self.resblock2 = ResBlock(in_channels//2)
+        self.upsample2 = nn.ConvTranspose2d(in_channels//2, out_channels, kernel_size=4, stride=2, padding=1)
+        self.resblock3 = ResBlock(out_channels)
+
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.resblock1(out)
+        out = self.upsample1(out)
+        out = self.resblock2(out)
+        out = self.upsample2(out)
+        out = self.resblock3(out)
 
         return out
 
@@ -273,20 +324,23 @@ class ImageProcessingTransformer(nn.Module):
     """
     def __init__(self, patch_size=1, in_channels=3, mid_channels=64, num_classes=1000, depth=12,
                  num_heads=8, ffn_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 norm_layer=nn.LayerNorm):
+                 norm_layer=nn.LayerNorm, crop_size=48, heads_tails_num=1, use_wf=False):
         super(ImageProcessingTransformer, self).__init__()
 
         self.task_id = None
         self.num_classes = num_classes
         self.embed_dim = patch_size * patch_size * mid_channels
-        self.headsets = nn.ModuleList([Head(in_channels, mid_channels) for _ in range(6)])
+        if use_wf:
+            print("Using wf features")
+        self.headsets = nn.ModuleList([Head(in_channels if not use_wf else in_channels+1, mid_channels) for _ in range(
+                heads_tails_num)])
         self.patch_embedding = PatchEmbed(patch_size=patch_size, in_channels=mid_channels)
         self.embed_dim = self.patch_embedding.dim
         if self.embed_dim % num_heads != 0:
             raise RuntimeError("Embedding dim must be devided by numbers of heads")
 
-        self.pos_embed = nn.Parameter(torch.zeros(1, (48 // patch_size) ** 2, self.embed_dim))
-        self.task_embed = nn.Parameter(torch.zeros(6, 1, (48 // patch_size) ** 2, self.embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, (crop_size // patch_size) ** 2, self.embed_dim))
+        self.task_embed = nn.Parameter(torch.zeros(heads_tails_num, 1, (crop_size // patch_size) ** 2, self.embed_dim))
         self.encoder = nn.ModuleList([
             EncoderLayer(
                 dim=self.embed_dim, num_heads=num_heads, ffn_ratio=ffn_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -298,10 +352,11 @@ class ImageProcessingTransformer(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, norm_layer=norm_layer)
             for _ in range(depth)])
         #self.norm = norm_layer(self.embed_dim)
+        self.norm = norm_layer([in_channels, crop_size, crop_size])
 
         self.de_patch_embedding = DePatchEmbed(patch_size=patch_size, in_channels=mid_channels)
         # tail
-        self.tailsets = nn.ModuleList([Tail(id, mid_channels, in_channels) for id in range(6)])
+        self.tailsets = nn.ModuleList([Tail(id, mid_channels, in_channels) for id in range(heads_tails_num)])
 
         trunc_normal_(self.pos_embed, std=.02)
         self.apply(self._init_weights)
@@ -331,7 +386,76 @@ class ImageProcessingTransformer(nn.Module):
             x = blk(x, self.pos_embed[:, :x.shape[1]], self.task_embed[self.task_id, :, :x.shape[1]])
         x = self.de_patch_embedding(x, ori_shape)
         x = self.tailsets[self.task_id](x)
-        #x = self.norm(x)
+        # x = self.norm(x).clamp(min=-1, max=1)
+        # x = self.norm(x)
+
+        return x
+
+
+class ImageProcessingTransformer_plus(nn.Module):
+    def __init__(self, patch_size=1, in_channels=3, mid_channels=64, num_classes=1000, depth=6,
+                 num_heads=8, ffn_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 norm_layer=nn.LayerNorm, crop_size=48, heads_tails_num=1):
+        super(ImageProcessingTransformer_plus, self).__init__()
+
+        self.task_id = None
+        self.num_classes = num_classes
+        self.embed_dim = patch_size * patch_size * mid_channels
+        self.headsets = nn.ModuleList([Head_plus(in_channels, mid_channels) for _ in range(heads_tails_num)])
+        self.patch_embedding = PatchEmbed(patch_size=patch_size, in_channels=mid_channels)
+        self.embed_dim = self.patch_embedding.dim
+        if self.embed_dim % num_heads != 0:
+            raise RuntimeError("Embedding dim must be devided by numbers of heads")
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, (crop_size // patch_size) ** 2, self.embed_dim))
+
+        self.task_embed = nn.Parameter(torch.zeros(heads_tails_num, 1, (crop_size // patch_size) ** 2, self.embed_dim))
+        print('depth:', depth)
+        self.encoder = nn.ModuleList([
+            EncoderLayer(
+                dim=self.embed_dim, num_heads=num_heads, ffn_ratio=ffn_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, norm_layer=norm_layer)
+            for _ in range(depth)])
+        self.decoder = nn.ModuleList([
+            DecoderLayer(
+                dim=self.embed_dim, num_heads=num_heads, ffn_ratio=ffn_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, norm_layer=norm_layer)
+            for _ in range(depth)])
+        # self.norm = norm_layer(self.embed_dim)
+
+        self.de_patch_embedding = DePatchEmbed(patch_size=patch_size, in_channels=mid_channels)
+        # tail
+        self.tailsets = nn.ModuleList([Tail_plus(mid_channels, in_channels) for id in range(heads_tails_num)])
+
+        trunc_normal_(self.pos_embed, std=.02)
+        self.apply(self._init_weights)
+
+    def set_task(self, task_id):
+        self.task_id = task_id
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def forward(self, x):
+        assert 0 <= self.task_id <= 5
+        # print("input shape:", x.shape, x.device)
+        x = self.headsets[self.task_id](x)
+        x, ori_shape = self.patch_embedding(x)
+        # print("embedding shape:", x.shape)
+        # print(x.device, self.pos_embed.device)
+        for blk in self.encoder:
+            x = blk(x, self.pos_embed[:, :x.shape[1]])
+        for blk in self.decoder:
+            x = blk(x, self.pos_embed[:, :x.shape[1]], self.pos_embed[:, :x.shape[1]])
+        x = self.de_patch_embedding(x, ori_shape)
+        x = self.tailsets[self.task_id](x)
+        # x = self.norm(x)
         return x
 
 
@@ -391,9 +515,20 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
 
-def ipt_base(**kwargs):
-    model = ImageProcessingTransformer(
-        patch_size=4, depth=12, num_heads=8, ffn_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+def ipt_base(in_channels,patch_size ,crop_size, mid_channels, heads_tails_num,
+             model_name='ImageProcessingTransformer', use_wf=False ,**kwargs):
+    if model_name=='ImageProcessingTransformer':
+        model = ImageProcessingTransformer(
+            in_channels=in_channels,patch_size=patch_size, depth=12, num_heads=8, ffn_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), crop_size=crop_size,mid_channels=mid_channels, heads_tails_num=heads_tails_num,
+            use_wf=use_wf,**kwargs)
+    elif model_name=='ImageProcessingTransformer_plus':
+        model = ImageProcessingTransformer_plus(
+            in_channels=in_channels, patch_size=patch_size, depth=12, num_heads=8, ffn_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), crop_size=crop_size, mid_channels=mid_channels,
+            heads_tails_num=heads_tails_num,
+            **kwargs)
+    else:
+        raise NameError("model_name should be 'ImageProcessingTransformer' or 'ImageProcessingTransformer_plus'")
     return model
 

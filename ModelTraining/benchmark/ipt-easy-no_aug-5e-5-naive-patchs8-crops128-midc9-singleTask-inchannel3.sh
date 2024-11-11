@@ -1,0 +1,17 @@
+python main.py \
+--task-name "ipt-easy-no_aug-5e-5-naive-patchs8-crops128-midc9-singleTask-inchannel3" \
+--reset-task \
+--model-name 'ImageProcessingTransformer' \
+--data './data/tubulin-sim-800x800-processed-easy.npz' \
+--num-dataset-t 0,190 \
+--eval-data './data/tubulin-sim-800x800-processed-easy.npz' \
+--num-dataset-v 190,200 \
+--epochs 500 \
+--batch-size 1 \
+--lr 5e-5 \
+--lr-policy 'naive' \
+--patch-size 8 \
+--crop-size 128 \
+--mid-channels 9 \
+--heads-tails-num 1 \
+--in-channels 3
